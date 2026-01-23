@@ -19,12 +19,13 @@ type ParsedArgs = {
   dryRun?: boolean
   inputFile?: string
   components?: string
+  folder?: string
 }
 
 const HELP_TEXT = `unused-components: Find unused Storyblok components in a space
 
 Usage:
-  unused-components --list [--space-id <id>] [--output <stdout|txt>] [--help]
+  unused-components --list [--space-id <id>] [--folder <path>] [--output <stdout|txt>] [--help]
   unused-components --delete --input-file <path> [--dry-run] [--space-id <id>]
   unused-components --delete --components <a,b,c> [--dry-run] [--space-id <id>]
 
@@ -36,6 +37,7 @@ Options:
   --dry-run            Report what would happen without deleting
   --input-file <path>  Newline-separated component names to delete
   --components <list>  Comma-separated component names to delete
+  --folder <path>      Limit usage checks to stories under the folder path
   --help, -h           Show this help message
 
 Environment:
@@ -205,6 +207,21 @@ const parseArgs = (argv: string[]): ParsedArgs => {
       continue
     }
 
+    if (arg === '--folder') {
+      const value = argv[i + 1]
+      if (!value) {
+        throw new Error('Missing value for --folder')
+      }
+      parsed.folder = value
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith('--folder=')) {
+      parsed.folder = arg.split('=')[1]
+      continue
+    }
+
     if (arg === '--space-id') {
       const value = argv[i + 1]
       if (!value) {
@@ -266,6 +283,19 @@ const normalizeNames = (names: string[]): string[] => {
 const parseComponentsList = (value: string): string[] =>
   normalizeNames(value.split(','))
 
+const normalizeFolder = (value: string): string => {
+  const trimmed = value.trim()
+  const withoutLeading = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed
+  const withoutTrailing = withoutLeading.endsWith('/') ? withoutLeading.slice(0, -1) : withoutLeading
+  const normalized = withoutTrailing.trim()
+
+  if (!normalized) {
+    throw new Error('Folder path cannot be empty.')
+  }
+
+  return normalized
+}
+
 const readInputFile = async (filePath: string): Promise<string[]> => {
   const content = await fs.readFile(filePath, 'utf8')
   return normalizeNames(content.split(/\r?\n/))
@@ -274,12 +304,19 @@ const readInputFile = async (filePath: string): Promise<string[]> => {
 const isComponentUsed = async (
   storyblok: StoryblokClient,
   spaceId: string,
-  componentName: string
+  componentName: string,
+  folder?: string
 ): Promise<boolean> => {
-  const response = await storyblok.get(`spaces/${spaceId}/stories/`, {
+  const query: Record<string, string | number> = {
     contain_component: componentName,
     per_page: 1
-  })
+  }
+
+  if (folder) {
+    query.starts_with = folder
+  }
+
+  const response = await storyblok.get(`spaces/${spaceId}/stories/`, query)
   return response?.data?.stories?.length > 0
 }
 
@@ -397,6 +434,11 @@ const main = async () => {
     process.exit(1)
   }
 
+  if (parsed.delete && parsed.folder) {
+    log('The --folder flag is only supported with --list.')
+    process.exit(1)
+  }
+
   if (!parsed.list && !parsed.delete) {
     log('Missing mode flag. Provide either --list or --delete.')
     log(HELP_TEXT)
@@ -419,6 +461,8 @@ const main = async () => {
     log('The --input-file and --components flags are only valid with --delete.')
     process.exit(1)
   }
+
+  const folderFilter = parsed.folder ? normalizeFolder(parsed.folder) : undefined
 
   const token = getRequiredEnv('STORYBLOK_OAUTH_TOKEN')
   const spaceId = parsed.spaceId ?? getRequiredEnv('STORYBLOK_SPACE_ID')
@@ -569,6 +613,10 @@ const main = async () => {
     process.exit(1)
   }
 
+  if (folderFilter) {
+    log(`Filtering stories with starts_with="${folderFilter}"`)
+  }
+
   log(`Checking ${components.length} components for usage`)
 
   const unusedComponents: string[] = []
@@ -578,7 +626,7 @@ const main = async () => {
     const component = components[index]
     const componentName = component.name
 
-    const inUse = await isComponentUsed(storyblok, spaceId, componentName)
+    const inUse = await isComponentUsed(storyblok, spaceId, componentName, folderFilter)
 
     if (inUse) {
       usedComponents.push(componentName)

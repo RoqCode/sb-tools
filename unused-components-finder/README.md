@@ -37,6 +37,12 @@ List unused components (stdout output):
 node dist/index.js --list
 ```
 
+List unused components under a folder path:
+
+```bash
+node dist/index.js --list --folder apps/app-a
+```
+
 Override space ID and write to a txt file:
 
 ```bash
@@ -81,5 +87,6 @@ node dist/index.js --delete --input-file ./components.txt --dry-run
 
 - `--output stdout` prints unused component names to stdout (one per line).
 - `--output txt` writes `unused-components-<spaceId>.txt` in the current directory and overwrites any existing file with that name.
+- `--folder <path>` limits usage checks to stories under the provided full slug prefix.
 
 Progress messages and summary counts are printed to stderr so stdout stays clean.
